@@ -65,10 +65,8 @@ android {
         versionCode = 5
         versionName = "0.5.0"
         ndk {
-            // armeabi-v7a: the original 32-bit port. arm64-v8a: for devices without
-            // 32-bit support; built from the same sources with the 64-bit code paths
-            // (__SIZEOF_POINTER__ == 8, based on birabittoh's 64-bit PC port work).
-            abiFilters += listOf("armeabi-v7a", "arm64-v8a")
+            // 32-bit ARM dropped: halves build time and APK size
+            abiFilters += listOf("arm64-v8a")
         }
         externalNativeBuild {
             cmake {
