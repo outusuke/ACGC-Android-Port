@@ -11,6 +11,7 @@ import android.view.Surface;
 import android.view.SurfaceHolder;
 import android.view.ViewGroup;
 import android.view.WindowManager;
+import android.widget.RelativeLayout;
 
 import org.libsdl.app.SDLActivity;
 
@@ -80,6 +81,9 @@ public class GameActivity extends SDLActivity {
         int longSide = Math.max(dm.widthPixels, dm.heightPixels);
         if (shortSide <= target) return;
         int width = Math.round(longSide * (float) target / shortSide) & ~1;
+        // SDL adds the surface as wrap_content, which would show the small buffer unscaled
+        mSurface.setLayoutParams(new RelativeLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         mSurface.getHolder().setFixedSize(width, target);
     }
 
