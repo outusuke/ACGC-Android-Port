@@ -482,6 +482,14 @@ extern void graph_proc(void* arg) {
                 delta_time = dt_num_60fps_frames / 60.0;
             }
 
+#ifdef TARGET_ANDROID
+            /* Phones can't hold a steady frame time; NPC pathing is step-size sensitive, so use the nominal step. */
+            if (g_frame_limiter > 0) {
+                dt_num_60fps_frames = 60.0 / (double)g_frame_limiter;
+                delta_time = 1.0 / (double)g_frame_limiter;
+            }
+#endif
+
 #ifdef TARGET_PC
             if (g_pc_speedhack_enabled) {
                 dt_num_60fps_frames *= PC_SPEEDHACK_MULTIPLIER;
