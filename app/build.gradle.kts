@@ -53,6 +53,8 @@ tasks.matching { it.name == "preBuild" || it.name.startsWith("configureCMake") }
 // signed with the debug key so `assembleRelease` still produces an installable APK.
 val signingProps = rootProject.file("keystore.properties")
 
+val abis = (findProperty("abi") as String?)?.split(",") ?: listOf("arm64-v8a")
+
 android {
     namespace = "com.acpc.port"
     compileSdk = 34
@@ -65,8 +67,8 @@ android {
         versionCode = 5
         versionName = "0.5.0"
         ndk {
-            // 32-bit ARM dropped: halves build time and APK size
-            abiFilters += listOf("arm64-v8a")
+            // arm64 only by default; -Pabi=armeabi-v7a,arm64-v8a for both
+            abiFilters += abis
         }
         externalNativeBuild {
             cmake {

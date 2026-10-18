@@ -1,0 +1,74 @@
+name: Build APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      abi:
+        description: ABI to build
+        type: choice
+        default: arm64-v8a
+        options:
+          - arm64-v8a
+          - all
+  push:
+    branches: [master, main, "perf/**"]
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      KS_B64: ${{ secrets.KEYSTORE_BASE64 }}
+      KS_PASS: ${{ secrets.KEYSTORE_PASSWORD }}
+      KS_ALIAS: ${{ secrets.KEY_ALIAS }}
+      KS_KEY_PASS: ${{ secrets.KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Install NDK and CMake
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;27.0.12077973" "cmake;3.22.1"
+
+      # Without a keystore the release APK gets a throwaway debug key, so it can't update an earlier install.
+      - name: Write signing config
+        if: env.KS_B64 != ''
+        run: |
+          {
+            echo "storeBase64=$KS_B64"
+            echo "storePassword=$KS_PASS"
+            echo "keyAlias=$KS_ALIAS"
+            echo "keyPassword=$KS_KEY_PASS"
+          } > keystore.properties
+
+      - name: Build
+        run: |
+          chmod +x gradlew
+          abi="${{ inputs.abi || 'arm64-v8a' }}"
+          if [ "$abi" = "all" ]; then abi="armeabi-v7a,arm64-v8a"; fi
+          ./gradlew assembleRelease -Pabi="$abi"
+
+      - name: List APKs
+        if: always()
+        run: find app/build -name '*.apk'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AnimalCrossing-apk
+          path: app/build/outputs/apk/**/*.apk
+          if-no-files-found: error
