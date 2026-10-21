@@ -131,7 +131,8 @@ public class TouchControlsView extends View {
 
         if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_POINTER_DOWN) {
             float x = e.getX(idx), y = e.getY(idx);
-            if (stickPointer < 0 && x < getWidth() * 0.4f && y > getHeight() * 0.45f) {
+            // the D-pad sits inside the stick zone, so buttons get first claim on the touch
+            if (stickPointer < 0 && !onButton(x, y) && x < getWidth() * 0.4f && y > getHeight() * 0.45f) {
                 stickPointer = id;
                 stickBaseX = stickKnobX = x;
                 stickBaseY = stickKnobY = y;
@@ -179,6 +180,11 @@ public class TouchControlsView extends View {
         push();
         invalidate();
         return true;
+    }
+
+    private boolean onButton(float x, float y) {
+        for (Button b : buttons) if (b.hit(x, y)) return true;
+        return false;
     }
 
     private static float dist(float x0, float y0, float x1, float y1) {
