@@ -12,6 +12,10 @@
 #include <stdio.h>
 #include <string.h>
 
+#ifdef TARGET_ANDROID
+#include <dolphin/pad.h>
+#endif
+
 int g_pc_paused = 0;
 
 /* Pausing is blocked while either is set: main menu (set by ac_animal_logo)
@@ -204,6 +208,34 @@ int pc_pause_menu_handle_event(const SDL_Event* e) {
     }
     return 0;
 }
+
+#ifdef TARGET_ANDROID
+#define TOUCH_STICK_NAV 64
+
+void pc_pause_menu_poll_touch(void) {
+    extern volatile int g_android_touch_buttons;
+    extern volatile int g_android_touch_stick_x, g_android_touch_stick_y;
+    static int prev = 0;
+    int cur = g_android_touch_buttons;
+    int edge;
+
+    if (g_android_touch_stick_x <= -TOUCH_STICK_NAV) cur |= PAD_BUTTON_LEFT;
+    if (g_android_touch_stick_x >=  TOUCH_STICK_NAV) cur |= PAD_BUTTON_RIGHT;
+    if (g_android_touch_stick_y <= -TOUCH_STICK_NAV) cur |= PAD_BUTTON_DOWN;
+    if (g_android_touch_stick_y >=  TOUCH_STICK_NAV) cur |= PAD_BUTTON_UP;
+
+    edge = cur & ~prev;
+    prev = cur;
+    if (!g_pc_paused) return;
+
+    if (edge & PAD_BUTTON_UP)         handle_action(ACT_UP);
+    else if (edge & PAD_BUTTON_DOWN)  handle_action(ACT_DOWN);
+    else if (edge & PAD_BUTTON_LEFT)  handle_action(ACT_LEFT);
+    else if (edge & PAD_BUTTON_RIGHT) handle_action(ACT_RIGHT);
+    else if (edge & PAD_BUTTON_A)     handle_action(ACT_CONFIRM);
+    else if (edge & (PAD_BUTTON_B | PAD_BUTTON_START)) handle_action(ACT_CANCEL);
+}
+#endif
 
 /* Drawing */
 

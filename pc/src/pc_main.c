@@ -355,6 +355,9 @@ int pc_platform_poll_events(void) {
                 break;
         }
     }
+#ifdef TARGET_ANDROID
+    pc_pause_menu_poll_touch();
+#endif
     return 1;
 }
 

@@ -22,6 +22,11 @@ void pc_pause_menu_toggle(void);
 /* Forward an SDL event for menu navigation. Returns 1 if consumed. No-op if not paused. */
 int  pc_pause_menu_handle_event(const SDL_Event* e);
 
+#ifdef TARGET_ANDROID
+/* Feeds the on-screen touch pad into the pause menu; call once per frame. */
+void pc_pause_menu_poll_touch(void);
+#endif
+
 /* Append the pause overlay to the game's font display list, from graph_main
  * after game_main() returns. No-op if not paused. */
 void pc_pause_menu_draw(struct game_s* game);
