@@ -1,0 +1,96 @@
+name: Release APK
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag (e.g. v0.5.1)
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+      KS_B64: ${{ secrets.KEYSTORE_BASE64 }}
+      KS_PASS: ${{ secrets.KEYSTORE_PASSWORD }}
+      KS_ALIAS: ${{ secrets.KEY_ALIAS }}
+      KS_KEY_PASS: ${{ secrets.KEY_PASSWORD }}
+    steps:
+      - name: Require signing key
+        if: env.KS_B64 == ''
+        run: |
+          echo "::error::KEYSTORE_BASE64 is not set; a debug-signed release can't update existing installs"
+          exit 1
+
+      - uses: actions/checkout@v4
+
+      - name: Check tag against versionName
+        run: |
+          name=$(sed -n 's/.*versionName = "\(.*\)".*/\1/p' app/build.gradle.kts | head -1)
+          [ "$TAG" = "v$name" ] || echo "::warning::tag $TAG does not match versionName $name in app/build.gradle.kts"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Install NDK and CMake
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;27.0.12077973" "cmake;3.22.1"
+
+      - name: Write signing config
+        run: |
+          {
+            echo "storeBase64=$KS_B64"
+            echo "storePassword=$KS_PASS"
+            echo "keyAlias=$KS_ALIAS"
+            echo "keyPassword=$KS_KEY_PASS"
+          } > keystore.properties
+
+      - name: Build
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease -Pabi=armeabi-v7a,arm64-v8a
+
+      - name: Collect release files
+        run: |
+          apk=$(find app/build/outputs/apk/release -name '*.apk' | head -1)
+          [ -n "$apk" ] || { echo "::error::no release APK found"; exit 1; }
+          mkdir dist
+          cp "$apk" "dist/AnimalCrossing-$TAG.apk"
+          (cd dist && sha256sum "AnimalCrossing-$TAG.apk" > "AnimalCrossing-$TAG.apk.sha256")
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AnimalCrossing-symbols-${{ env.TAG }}
+          path: app/build/intermediates/cxx/**/obj/*/libAnimalCrossing.so
+          retention-days: 90
+          if-no-files-found: warn
+
+      - name: Publish release
+        run: |
+          case "$TAG" in *-*) pre=--prerelease ;; *) pre= ;; esac
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+          else
+            gh release create "$TAG" dist/* --title "$TAG" --generate-notes --target "$GITHUB_SHA" $pre
+          fi
