@@ -6,10 +6,10 @@ on:
       abi:
         description: ABI to build
         type: choice
-        default: arm64-v8a
+        default: all
         options:
-          - arm64-v8a
           - all
+          - arm64-v8a
   push:
     branches: [master, main, "perf/**"]
 
@@ -59,7 +59,7 @@ jobs:
       - name: Build
         run: |
           chmod +x gradlew
-          abi="${{ inputs.abi || 'arm64-v8a' }}"
+          abi="${{ inputs.abi || 'all' }}"
           if [ "$abi" = "all" ]; then abi="armeabi-v7a,arm64-v8a"; fi
           ./gradlew assembleRelease -Pabi="$abi"
 
