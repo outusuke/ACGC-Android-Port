@@ -18,6 +18,20 @@ u32 g_frame_limiter = 60; // 60Hz
 static void (*vi_pre_callback)(u32) = NULL;
 static void (*vi_post_callback)(u32) = NULL;
 
+#if defined(__linux__) && !defined(__ANDROID__)
+#define VI_SPIN_US 500
+static void vi_sleep_us(Uint64 us) {
+    struct timespec ts = { (time_t)(us / 1000000), (long)(us % 1000000) * 1000 };
+    clock_nanosleep(CLOCK_MONOTONIC, 0, &ts, NULL);
+}
+#else
+#define VI_SPIN_US 2000
+static void vi_sleep_us(Uint64 us) {
+    (void)us;
+    SDL_Delay(1);
+}
+#endif
+
 void VIInit(void) {
     if (g_frame_limiter > 0) {
         printf("[VI] frame limit=%luus (%lu Hz)\n",
@@ -88,8 +102,8 @@ void VIWaitForRetrace(void) {
                 /* Spin for sub-ms precision. */
                 while (elapsed_us < (Uint64)pace_us) {
                     Uint64 remain_us = (Uint64)pace_us - elapsed_us;
-                    if (remain_us > 2000) {
-                        SDL_Delay(1);
+                    if (remain_us > VI_SPIN_US) {
+                        vi_sleep_us(remain_us - VI_SPIN_US);
                     }
                     now = SDL_GetPerformanceCounter();
                     elapsed_us = (now - frame_start_time) * 1000000 / perf_freq;

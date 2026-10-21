@@ -48,7 +48,8 @@ static int pc_audio_producer_func(void* data) {
         if (fill < AUDIO_PRODUCE_THRESHOLD) {
             pc_audio_process_frame();
         } else {
-            SDL_Delay(1);
+            /* ~70ms of buffer at the threshold, so a 4ms poll can't underrun */
+            SDL_Delay(4);
         }
     }
     return 0;

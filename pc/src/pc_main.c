@@ -138,6 +138,7 @@ void pc_platform_init(void) {
 #ifdef TARGET_ANDROID
     /* The system back button/gesture opens the pause menu instead of closing the activity. */
     SDL_SetHint(SDL_HINT_ANDROID_TRAP_BACK_BUTTON, "1");
+    SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
 #endif
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER | SDL_INIT_AUDIO | SDL_INIT_TIMER) < 0) {
         fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());

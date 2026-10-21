@@ -79,28 +79,98 @@ static void pc_gx_update_aspect(void) {
 static struct {
     uintptr_t dest_ptr;
     GLuint gl_tex;
+    int w, h;
 } s_efb_captures[MAX_EFB_CAPTURES];
 static int s_efb_capture_count = 0;
 
-void pc_gx_efb_capture_store(uintptr_t dest_ptr, GLuint gl_tex) {
+static GLuint s_efb_fbo;
+static GLuint s_efb_resolve_fbo;
+static GLuint s_efb_resolve_tex;
+static int s_efb_resolve_w, s_efb_resolve_h;
+
+static void efb_tex_alloc(GLuint tex, int w, int h, GLenum filter) {
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+}
+
+GLuint pc_gx_efb_capture_acquire(uintptr_t dest_ptr, int w, int h) {
+    int slot = -1;
     for (int i = 0; i < s_efb_capture_count; i++) {
         if (s_efb_captures[i].dest_ptr == dest_ptr) {
-            if (s_efb_captures[i].gl_tex)
-                glDeleteTextures(1, &s_efb_captures[i].gl_tex);
-            s_efb_captures[i].gl_tex = gl_tex;
-            return;
+            slot = i;
+            break;
         }
     }
-    if (s_efb_capture_count >= MAX_EFB_CAPTURES) {
-        if (s_efb_captures[0].gl_tex)
-            glDeleteTextures(1, &s_efb_captures[0].gl_tex);
-        memmove(&s_efb_captures[0], &s_efb_captures[1],
-                (MAX_EFB_CAPTURES - 1) * sizeof(s_efb_captures[0]));
-        s_efb_capture_count = MAX_EFB_CAPTURES - 1;
+    if (slot < 0) {
+        GLuint tex = 0;
+        int tw = 0, th = 0;
+        if (s_efb_capture_count >= MAX_EFB_CAPTURES) {
+            tex = s_efb_captures[0].gl_tex;
+            tw = s_efb_captures[0].w;
+            th = s_efb_captures[0].h;
+            memmove(&s_efb_captures[0], &s_efb_captures[1],
+                    (MAX_EFB_CAPTURES - 1) * sizeof(s_efb_captures[0]));
+            s_efb_capture_count = MAX_EFB_CAPTURES - 1;
+        }
+        slot = s_efb_capture_count++;
+        s_efb_captures[slot].dest_ptr = dest_ptr;
+        s_efb_captures[slot].gl_tex = tex;
+        s_efb_captures[slot].w = tw;
+        s_efb_captures[slot].h = th;
     }
-    s_efb_captures[s_efb_capture_count].dest_ptr = dest_ptr;
-    s_efb_captures[s_efb_capture_count].gl_tex = gl_tex;
-    s_efb_capture_count++;
+    if (!s_efb_captures[slot].gl_tex)
+        glGenTextures(1, &s_efb_captures[slot].gl_tex);
+    if (s_efb_captures[slot].w != w || s_efb_captures[slot].h != h) {
+        efb_tex_alloc(s_efb_captures[slot].gl_tex, w, h, GL_LINEAR);
+        s_efb_captures[slot].w = w;
+        s_efb_captures[slot].h = h;
+    }
+    return s_efb_captures[slot].gl_tex;
+}
+
+void pc_gx_efb_blit_to(GLuint dst_tex, int x, int y, int w, int h) {
+    GLint samples = 0;
+    glGetIntegerv(GL_SAMPLES, &samples);
+
+    /* glBlitFramebuffer honors the scissor test, glReadPixels did not */
+    GLboolean scissor = glIsEnabled(GL_SCISSOR_TEST);
+    if (scissor) glDisable(GL_SCISSOR_TEST);
+
+    if (!s_efb_fbo) glGenFramebuffers(1, &s_efb_fbo);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, s_efb_fbo);
+    glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, dst_tex, 0);
+
+    if (samples > 1) {
+        /* A multisample resolve can't flip, so resolve first and flip on the second blit */
+        if (!s_efb_resolve_fbo) {
+            glGenFramebuffers(1, &s_efb_resolve_fbo);
+            glGenTextures(1, &s_efb_resolve_tex);
+        }
+        if (s_efb_resolve_w != g_pc_window_w || s_efb_resolve_h != g_pc_window_h) {
+            efb_tex_alloc(s_efb_resolve_tex, g_pc_window_w, g_pc_window_h, GL_NEAREST);
+            s_efb_resolve_w = g_pc_window_w;
+            s_efb_resolve_h = g_pc_window_h;
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, s_efb_resolve_fbo);
+            glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
+                                   s_efb_resolve_tex, 0);
+        }
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, s_efb_resolve_fbo);
+        glBlitFramebuffer(x, y, x + w, y + h, x, y, x + w, y + h,
+                          GL_COLOR_BUFFER_BIT, GL_NEAREST);
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, s_efb_resolve_fbo);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, s_efb_fbo);
+    } else {
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+    }
+    glBlitFramebuffer(x, y, x + w, y + h, 0, h, w, 0, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    if (scissor) glEnable(GL_SCISSOR_TEST);
 }
 
 GLuint pc_gx_efb_capture_find(uintptr_t data_ptr) {
@@ -117,6 +187,11 @@ void pc_gx_efb_capture_cleanup(void) {
             glDeleteTextures(1, &s_efb_captures[i].gl_tex);
     }
     s_efb_capture_count = 0;
+    if (s_efb_fbo) glDeleteFramebuffers(1, &s_efb_fbo);
+    if (s_efb_resolve_fbo) glDeleteFramebuffers(1, &s_efb_resolve_fbo);
+    if (s_efb_resolve_tex) glDeleteTextures(1, &s_efb_resolve_tex);
+    s_efb_fbo = s_efb_resolve_fbo = s_efb_resolve_tex = 0;
+    s_efb_resolve_w = s_efb_resolve_h = 0;
 }
 #endif
 
@@ -2072,41 +2147,11 @@ static void pc_gx_copy_tex_execute_impl(void* dest, GXBool clear) {
     int gl_y = g_pc_window_h - (read_top + read_ht);
     if (gl_y < 0) return;
 
-    size_t rgba_size = (size_t)read_wd * (size_t)read_ht * 4;
-    u8* rgba = (u8*)malloc(rgba_size);
-    if (!rgba) return;
-
-    glPixelStorei(GL_PACK_ALIGNMENT, 1);
-    glReadPixels(read_left, gl_y, read_wd, read_ht, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
-
 #ifdef PC_ENHANCEMENTS
     /* Store as full-res GL texture; GXLoadTexObj will substitute it for the RGB565 buffer */
     {
-        /* Flip: glReadPixels is bottom-up, textures are top-down */
-        int row_bytes = read_wd * 4;
-        for (int y = 0; y < read_ht / 2; y++) {
-            u8* top_row = &rgba[y * row_bytes];
-            u8* bot_row = &rgba[(read_ht - 1 - y) * row_bytes];
-            for (int b = 0; b < row_bytes; b++) {
-                u8 tmp = top_row[b];
-                top_row[b] = bot_row[b];
-                bot_row[b] = tmp;
-            }
-        }
-
-        GLuint efb_tex;
-        glGenTextures(1, &efb_tex);
-        glBindTexture(GL_TEXTURE_2D, efb_tex);
-        pc_profiler_add_count_texture_bind();
-        pc_gx_texture_bind_cache_invalidate();
-        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, read_wd, read_ht, 0,
-                     GL_RGBA, GL_UNSIGNED_BYTE, rgba);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        pc_gx_efb_capture_store((uintptr_t)dest, efb_tex);
+        GLuint efb_tex = pc_gx_efb_capture_acquire((uintptr_t)dest, read_wd, read_ht);
+        pc_gx_efb_blit_to(efb_tex, read_left, gl_y, read_wd, read_ht);
         glBindTexture(GL_TEXTURE_2D, 0);
         pc_profiler_add_count_texture_bind();
         pc_gx_texture_bind_cache_invalidate();
@@ -2114,6 +2159,13 @@ static void pc_gx_copy_tex_execute_impl(void* dest, GXBool clear) {
         DIRTY(PC_GX_DIRTY_TEXTURES);
     }
 #else
+    size_t rgba_size = (size_t)read_wd * (size_t)read_ht * 4;
+    u8* rgba = (u8*)malloc(rgba_size);
+    if (!rgba) return;
+
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadPixels(read_left, gl_y, read_wd, read_ht, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+
     if (g_gx.tex_copy_fmt == 0x4) {
         u8* out = (u8*)dest;
         int bw = (out_wd + 3) / 4;
@@ -2143,13 +2195,13 @@ static void pc_gx_copy_tex_execute_impl(void* dest, GXBool clear) {
             }
         }
     }
+    free(rgba);
 #endif
 
-    free(rgba);
     (void)clear;
 }
 
-/* Times the synchronous glReadPixels stall (called via GXCopyDisp and DL replay) */
+/* Times the EFB copy (called via GXCopyDisp and DL replay) */
 static void pc_gx_copy_tex_execute(void* dest, GXBool clear) {
     Uint64 prof_start = pc_profiler_begin_timer();
     pc_gx_copy_tex_execute_impl(dest, clear);
